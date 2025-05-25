@@ -16,7 +16,7 @@ genai.configure(api_key=GOOGLE_API_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
 # --- FastAPI Endpoint ---
-FASTAPI_BASE_URL = "http://127.0.0.1:8000" # Your FastAPI app's address
+FASTAPI_BASE_URL = "https://volvo-edi-fastapi-backend.onrender.com" # Your FastAPI app's address
 
 def extract_segment_from_query(user_input):
     """

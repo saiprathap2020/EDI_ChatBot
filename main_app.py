@@ -50,33 +50,54 @@ try:
             print(f"MOCK_DB: Added new doc with auto-ID {doc_id}")
             return MockFirestoreDocument(doc_id, data)
 
+    # --- MODIFIED Firebase Initialization for Deployment ---
     try:
         import firebase_admin
         from firebase_admin import credentials, firestore
+        
         if not firebase_admin._apps:
-            if os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
-                cred = credentials.ApplicationDefault(); firebase_admin.initialize_app(cred); db = firestore.client()
-                print("SUCCESS: Firebase Admin SDK initialized via GOOGLE_APPLICATION_CREDENTIALS.")
-            elif '__firebase_config' in globals() and globals()['__firebase_config']:
-                print("INFO: Found __firebase_config. Attempting default init for Admin SDK (may fail).")
+            cred_initialized = False
+            # 1. Try to load from Streamlit secrets (preferred for Streamlit Cloud)
+            # Ensure you've set FIREBASE_SERVICE_ACCOUNT_JSON_CONTENT in st.secrets
+            if "FIREBASE_SERVICE_ACCOUNT_JSON_CONTENT" in st.secrets:
                 try:
-                    cred = credentials.ApplicationDefault(); firebase_admin.initialize_app(cred); db = firestore.client()
-                    print("SUCCESS: Firebase Admin SDK initialized using Application Default (after finding __firebase_config).")
-                except Exception as default_cred_error:
-                    print(f"WARN: Default credentials failed after finding __firebase_config ({default_cred_error}). Using MOCK DB.")
-                    raise EnvironmentError("No Firebase Admin credentials for SDK.")
-            else: 
-                print("INFO: No Firebase Admin credentials. Using MOCK Firestore database.")
-                raise EnvironmentError("No Firebase credentials found for Admin SDK.")
+                    cred_json_str = st.secrets["FIREBASE_SERVICE_ACCOUNT_JSON_CONTENT"]
+                    cred_dict = json.loads(cred_json_str)
+                    cred = credentials.Certificate(cred_dict)
+                    firebase_admin.initialize_app(cred)
+                    db = firestore.client()
+                    print("SUCCESS: Firebase Admin SDK initialized from Streamlit Secret (FIREBASE_SERVICE_ACCOUNT_JSON_CONTENT).")
+                    cred_initialized = True
+                except Exception as e_streamlit_secret:
+                    print(f"WARN: Failed to init Firebase from Streamlit JSON secret: {e_streamlit_secret}")
+                    # Potentially log e_streamlit_secret for more details
+
+            # 2. Fallback to GOOGLE_APPLICATION_CREDENTIALS env var (standard for many platforms)
+            if not cred_initialized and os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
+                try:
+                    cred = credentials.ApplicationDefault()
+                    firebase_admin.initialize_app(cred)
+                    db = firestore.client()
+                    print("SUCCESS: Firebase Admin SDK initialized using GOOGLE_APPLICATION_CREDENTIALS env var.")
+                    cred_initialized = True
+                except Exception as e_gac:
+                    print(f"WARN: Failed to init Firebase from GOOGLE_APPLICATION_CREDENTIALS: {e_gac}")
+            
+            if not cred_initialized:
+                print("INFO: No valid Firebase Admin credentials found (Streamlit Secret or GOOGLE_APPLICATION_CREDENTIALS). Using MOCK Firestore.")
+                raise EnvironmentError("No Firebase credentials for Admin SDK.") # This will trigger the mock DB fallback
         else:
-            db = firestore.client(); print("INFO: Firebase Admin SDK already initialized.")
+            db = firestore.client() 
+            print("INFO: Firebase Admin SDK already initialized.")
+
     except (ImportError, EnvironmentError, Exception) as e: 
-        print(f"WARN: Could not initialize Firebase Admin SDK ({type(e).__name__}: {e}). Using MOCK Firestore database.")
+        print(f"WARN: Could not initialize REAL Firebase Admin SDK ({type(e).__name__}: {e}). Using MOCK Firestore database.")
         class MockDB: 
             def collection(self, collection_name): 
                 print(f"MOCK_DB: Accessing collection '{collection_name}'")
                 return MockFirestoreCollection()
         db = MockDB() 
+    # --- END MODIFIED Firebase Initialization ---
 except Exception as e: 
     print(f"CRITICAL_ERROR: Outer Firebase/Mock initialization block failed: {e}. Application might not work correctly."); traceback.print_exc()
     if db is None: 
@@ -100,6 +121,12 @@ try:
 except ImportError:
     print("WARNING: 'gemini_handler.py' not found."); LOCAL_SPEC_OPTIONS_MAP = {"Select a Specification...": None}; EDI_SPEC_DETAILS_MAP = {} 
     def get_gemini_response(user_input, spec_option=None, use_gemini_model=True, spec_details=None): return f"(Placeholder) Response to: '{html.escape(user_input)}'"
+
+# ... (rest of your main_app.py code: load_css, auth functions, page display functions, main routing) ...
+# Ensure the rest of the file (display_login_page, display_register_page, display_chat_app_page, main)
+# is the same as the version in "Volvo Cars Chatbot with User Authentication (Forced Login Page Debug)"
+# or your last known good version for the UI flow.
+# For brevity, I'm not repeating the entire UI part here, but it should be included.
 
 def load_css(file_path):
     if os.path.exists(file_path):
@@ -176,7 +203,8 @@ def display_chat_app_page():
     
     username_display = "User" 
     if st.session_state.get("user_email"):
-        username_display = st.session_state.user_email.split('@')[0]
+        try: username_display = st.session_state.user_email.split('@')[0]
+        except: pass 
     st.sidebar.subheader(f"Welcome, {username_display}!")
 
     if st.sidebar.button("Logout", key="logout_btn_chat_v3_debug"):
@@ -217,16 +245,11 @@ def display_chat_app_page():
     st.markdown('<div class="chat-messages-area" id="chat-messages-area-streamlit-chat">', unsafe_allow_html=True)
     with st.container(): 
         if "messages" not in st.session_state: st.session_state.messages = [{"role": "assistant", "content": "Hello! I'm the EDI AI Assistant for Volvo Cars."},{"role": "assistant", "content": "How can I help you today?"}]
-        # --- FEEDBACK UI REMOVED ---
-        # if "feedbacks" not in st.session_state: st.session_state.feedbacks = {} 
+        # Feedback UI is removed
         for i, msg_data in enumerate(st.session_state.messages):
             message(msg_data["content"], is_user=(msg_data["role"] == "user"), key=f"msg_chat_display_v3_debug_{i}", avatar_style="initials" if msg_data["role"] == "user" else "bottts", seed="User" if msg_data["role"] == "user" else "AI")
-            # --- FEEDBACK UI RENDERING LOGIC REMOVED ---
-            # if msg_data["role"] == "assistant" and ... :
-            #    ... (feedback button code was here) ...
     st.markdown('</div>', unsafe_allow_html=True)
     st.markdown('<div class="sticky-input-area">', unsafe_allow_html=True)
-    # The clear_on_submit=True should handle clearing the input after form submission + rerun
     with st.form("user_input_form_chat_v3_debug", clear_on_submit=True): 
         user_input_value = st.text_input("Ask me anything!", key="user_input_widget_chat_v3_debug", placeholder="Ask me anything!", label_visibility="collapsed")
         submitted = st.form_submit_button("✈️") 
@@ -246,16 +269,13 @@ def display_chat_app_page():
         print(f"[MAIN_APP DEBUG] Passing to handler: user_input='{user_input_value}', spec_option_key='{spec_option_key_to_pass}', spec_details='{final_spec_details_for_handler}', use_ai_model={st.session_state.use_ai_model}")
         assistant_response = get_gemini_response(user_input_value, spec_option=spec_option_key_to_pass, use_gemini_model=st.session_state.use_ai_model, spec_details=final_spec_details_for_handler)
         st.session_state.messages.append({"role": "assistant", "content": assistant_response})
-        st.rerun() # This is key for clear_on_submit to work and UI to update
-    print("DEBUG_MAIN_APP: >>> display_chat_app_page() FINISHED <<<")
+        st.rerun()
+    print("DEBUG_MAIN_APP: >>> display_chat_app_page() FINISHED <<<") 
 
 
 def main():
     st.set_page_config(layout="centered", page_title="Volvo Cars EDI AI Assistant")
-    # Keep CSS loading enabled unless specifically debugging CSS issues
     load_css(os.path.join("assets", "style.css"))
-    # print("DEBUG_MAIN_APP: CSS loading is SKIPPED for this test.") # Keep this commented out for normal operation
-
 
     if "page" not in st.session_state:
         print("DEBUG_MAIN_APP: Initializing 'page' to 'login'")

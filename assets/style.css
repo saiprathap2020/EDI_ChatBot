@@ -1,0 +1,211 @@
+/* assets/style.css */
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap');
+
+/* --- General Styles --- */
+body {
+    font-family: 'Roboto', sans-serif;
+    background-color: #F5F5F7; 
+    color: #3c4043; 
+    margin: 0;
+    overflow-x: hidden;
+}
+
+/* --- Streamlit Specific Overrides --- */
+div[data-testid="stAppViewContainer"] > section > div[data-testid="block-container"] {
+    padding: 1rem 1rem 0 1rem; /* Top, LR, Bottom */
+    max-width: 900px;
+}
+
+div[data-testid="stHeader"], div[data-testid="stFooter"] {
+    display: none;
+}
+
+/* --- App Header --- */
+.app-header { 
+    text-align: center;
+}
+.app-header h1 { 
+    font-weight: 700;
+    color: #202124; 
+    font-size: 2.2em;
+    margin-top: 0.5em; 
+    margin-bottom: 0.1em;
+}
+
+.app-header p { 
+    font-size: 1em;
+    color: #5f6368; 
+    margin-top: 0;
+    margin-bottom: 1em; 
+}
+
+/* --- Toggle Switch Styling --- */
+div[data-testid="stToggle"] > label {
+    font-weight: 500;
+    color: #3c4043; 
+}
+hr { 
+    margin-top: 0.5em !important;
+    margin-bottom: 0.5em !important; 
+    border: 0; 
+    border-top: 1px solid #e0e0e0 !important; 
+}
+
+
+/* --- Chat Messages Area --- */
+.chat-messages-area {
+    padding-bottom: 130px; 
+    max-height: calc(100vh - 280px); 
+    overflow-y: auto; 
+}
+
+/* Outer container for messages from streamlit-chat */
+div[data-testid="stChatMessage"] {
+    margin-bottom: 0.75rem;
+    max-width: 75%; /* Bubbles won't take full width if avatar is gone */
+    border-radius: 18px;
+    padding: 0;
+    background-color: transparent;
+    border: none;
+    box-shadow: none;
+    display: flex; 
+    align-items: flex-end; 
+}
+
+div[data-testid="stChatMessage"][style*="flex-end"] { /* User messages */
+    margin-left: auto;
+    /* flex-direction: row-reverse; REMOVED as avatar is hidden */
+}
+div[data-testid="stChatMessage"][style*="flex-start"] { /* Assistant messages */
+    margin-right: auto;
+    /* flex-direction: row; REMOVED as avatar is hidden */
+}
+
+/* Inner content bubble styling */
+div[data-testid="stChatMessage"] > div > div:last-child { 
+    border-radius: 18px;
+    padding: 0.7rem 1.1rem;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+    word-wrap: break-word;
+    line-height: 1.5;
+    /* Ensure bubble takes appropriate width if avatar is gone */
+    /* max-width: 100%; /* Let the outer container's max-width control it */
+}
+
+/* Assistant messages (left aligned by streamlit-chat) */
+div[data-testid="stChatMessage"][style*="flex-start"] > div > div:last-child {
+    background-color: #F0F0F0; 
+    color: #202124; 
+    margin-left: 0; /* Remove margin if avatar was there */
+}
+
+/* User messages (right aligned by streamlit-chat) */
+div[data-testid="stChatMessage"][style*="flex-end"] > div > div:last-child {
+    background-color: #4F4F4F; 
+    color: #ffffff;
+    margin-right: 0; /* Remove margin if avatar was there */
+}
+
+div[data-testid="stChatMessage"] p {
+    margin: 0;
+}
+
+/* --- MODIFICATION: Hide Avatars --- */
+div[data-testid="stChatMessage"] > div > div:first-child {
+    display: none !important; /* Hide the avatar element */
+}
+
+
+/* --- Sticky Input Area --- */
+.sticky-input-area {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background-color: #F5F5F7; 
+    padding: 0.5rem 1rem; 
+    border-top: 1px solid #DADCE0; 
+    z-index: 1000;
+}
+
+.sticky-input-area > div[data-testid="stForm"],          
+.sticky-input-area .footer-text {  
+    max-width: 900px;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+    background-color: #F5F5F7; 
+}
+.sticky-input-area > div[data-testid="stHorizontalBlock"] { 
+    display: none; 
+}
+
+/* --- Input Form Styling --- */
+.sticky-input-area .stForm {
+    border: none;
+    padding: 0;
+    margin-bottom: 0.2rem; 
+    position: relative;
+    min-height: 46px; 
+}
+
+.sticky-input-area div[data-testid="stTextInput"] input {
+    background-color: #ffffff;
+    border: 1px solid #DADCE0;
+    border-radius: 22px;
+    padding: 0.75rem 45px 0.75rem 1.25rem; 
+    box-shadow: none;
+    width: 100%;
+    box-sizing: border-box;
+    height: 46px;
+}
+.sticky-input-area div[data-testid="stTextInput"] input:focus {
+    border-color: #1a73e8;
+    box-shadow: 0 0 0 0.2rem rgba(26,115,232,.15);
+}
+
+.sticky-input-area div[data-testid="stFormSubmitButton"] button {
+    background-color: transparent !important;
+    color: #1a73e8 !important; 
+    border: none !important;
+    padding: 0 !important;
+    font-size: 1.6em; 
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    line-height: 1;
+    box-shadow: none !important;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.sticky-input-area div[data-testid="stFormSubmitButton"] button:hover {
+    color: #1765c8 !important;
+}
+
+/* --- Footer Styling (inside sticky area) --- */
+.footer-text { 
+    text-align: center;
+}
+.footer-text p {
+    font-size: 0.7em;
+    color: #5f6368;
+    margin: 0.1em 0;
+}
+.footer-text a {
+    color: #1a73e8;
+    text-decoration: none;
+}
+.footer-text a:hover {
+    text-decoration: underline;
+}
+
+/* --- Feedback UI Styles REMOVED --- */
+/*
+.feedback-text { ... }
+.feedback-buttons-container { ... }
+*/

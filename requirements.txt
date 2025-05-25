@@ -1,0 +1,9 @@
+streamlit
+streamlit-chat
+google-generativeai
+python-dotenv  # If you use it locally, not for deployed secrets
+fastapi
+uvicorn[standard]
+requests
+Werkzeug
+firebase-admin

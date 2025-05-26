@@ -8,22 +8,28 @@ import traceback
 # For password hashing
 from werkzeug.security import generate_password_hash, check_password_hash
 
-# --- Session State Initialization for Mock DB ---
-if "_mock_db_users_store_session_data" not in st.session_state: # Use a distinct name
+# --- Session State Initialization for Mock DB & App State ---
+if "_mock_db_users_store_session_data" not in st.session_state:
     st.session_state._mock_db_users_store_session_data = {}
-    print(f"INFO: Initializing MOCK Firestore IN SESSION_STATE. Store: {st.session_state._mock_db_users_store_session_data}")
+    print(f"INFO: Initializing MOCK Firestore store IN SESSION_STATE. Initial store: {st.session_state._mock_db_users_store_session_data}")
+
+if "page" not in st.session_state:
+    st.session_state.page = "login" 
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+if "user_email" not in st.session_state:
+    st.session_state.user_email = None
 
 # --- Firebase Initialization ---
 app_id_global = 'default-app-id-local-dev' 
 db = None 
-IS_MOCK_DB = True # Start by assuming we'll use mock
+IS_MOCK_DB = True # Assume mock until real Firebase initializes successfully
 
-print(f"--- SCRIPT START (Auth Debug v5) ---")
+print(f"--- SCRIPT START (Auth Debug v6) ---")
 if '__app_id' in globals(): app_id_global = globals()['__app_id']
 
-USER_CREDENTIALS_COLLECTION = f"artifacts/{app_id_global}/user_auth_credentials_debug" # Added _debug to ensure fresh collection for test
+USER_CREDENTIALS_COLLECTION = f"artifacts/{app_id_global}/user_auth_credentials_debug_v2" # Using a distinct collection for clarity
 
-# --- Mock Database Classes (depend on st.session_state._mock_db_users_store_session_data) ---
 class MockFirestoreDocument:
     def __init__(self, doc_id, data=None):
         self.id = doc_id; self._data = data if data is not None else {}; self._exists = data is not None
@@ -33,7 +39,7 @@ class MockFirestoreDocument:
     def exists(self): return self._exists
     def set(self, data_to_set):
         if self.id:
-            st.session_state._mock_db_users_store_session_data[self.id] = data_to_set
+            st.session_state._mock_db_users_store_session_data[self.id] = data_to_set 
             self._data = data_to_set; self._exists = True
             print(f"MOCK_DB_SET (Session): User '{self.id}'. Store: {st.session_state._mock_db_users_store_session_data}")
         else: print("MOCK_DB_SET_ERROR: Document ID is None.")
@@ -60,48 +66,50 @@ class MockDB:
 # --- Firebase Admin SDK Initialization Logic ---
 try:
     print("FIREBASE_INIT: Attempting to initialize Firebase Admin SDK...")
+    google_app_creds = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    streamlit_secret_firebase_json = st.secrets.get("FIREBASE_SERVICE_ACCOUNT_JSON_CONTENT") if "FIREBASE_SERVICE_ACCOUNT_JSON_CONTENT" in st.secrets else None
+
     import firebase_admin
     from firebase_admin import credentials, firestore
     
     if not firebase_admin._apps:
-        # For local development, prioritize GOOGLE_APPLICATION_CREDENTIALS
-        if os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
-            print(f"FIREBASE_INIT: Found GOOGLE_APPLICATION_CREDENTIALS: {os.getenv('GOOGLE_APPLICATION_CREDENTIALS')}")
+        cred = None
+        if google_app_creds:
+            print(f"FIREBASE_INIT: Found GOOGLE_APPLICATION_CREDENTIALS env var: {google_app_creds}")
             try:
                 cred = credentials.ApplicationDefault()
                 firebase_admin.initialize_app(cred)
                 db = firestore.client()
                 IS_MOCK_DB = False
-                print("SUCCESS: Firebase Admin SDK initialized using GOOGLE_APPLICATION_CREDENTIALS env var.")
+                print("SUCCESS: Firebase Admin SDK initialized using GOOGLE_APPLICATION_CREDENTIALS.")
             except Exception as e_gac:
-                print(f"WARN: Failed to init Firebase from GOOGLE_APPLICATION_CREDENTIALS: {e_gac}. Using MOCK DB.")
-                db = MockDB(); IS_MOCK_DB = True
-        else:
-            # Try Streamlit secrets if available (for deployment)
-            if "FIREBASE_SERVICE_ACCOUNT_JSON_CONTENT" in st.secrets:
-                try:
-                    cred_json_str = st.secrets["FIREBASE_SERVICE_ACCOUNT_JSON_CONTENT"]
-                    cred_dict = json.loads(cred_json_str)
-                    cred = credentials.Certificate(cred_dict)
-                    firebase_admin.initialize_app(cred)
-                    db = firestore.client()
-                    IS_MOCK_DB = False
-                    print("SUCCESS: Firebase Admin SDK initialized from Streamlit Secret.")
-                except Exception as e_streamlit_secret:
-                    print(f"WARN: Failed to init Firebase from Streamlit JSON secret: {e_streamlit_secret}. Using MOCK DB.")
-                    db = MockDB(); IS_MOCK_DB = True
-            else:
-                print("INFO: No Firebase credentials (GOOGLE_APPLICATION_CREDENTIALS or Streamlit Secret). Using MOCK Firestore.")
-                db = MockDB(); IS_MOCK_DB = True
-    else:
+                print(f"WARN: Failed to init Firebase from GOOGLE_APPLICATION_CREDENTIALS: {e_gac}. Will try secrets or mock.")
+                db = None # Ensure db is reset if GAC init fails
+        
+        if db is None and streamlit_secret_firebase_json: # If GAC failed or not set, try Streamlit Secret
+            print("FIREBASE_INIT: GOOGLE_APPLICATION_CREDENTIALS failed or not set. Trying Streamlit Secret FIREBASE_SERVICE_ACCOUNT_JSON_CONTENT.")
+            try:
+                cred_dict = json.loads(streamlit_secret_firebase_json)
+                cred = credentials.Certificate(cred_dict)
+                firebase_admin.initialize_app(cred) # This might error if already initialized by failed GAC
+                db = firestore.client()
+                IS_MOCK_DB = False
+                print("SUCCESS: Firebase Admin SDK initialized from Streamlit Secret.")
+            except Exception as e_streamlit_secret:
+                print(f"WARN: Failed to init Firebase from Streamlit JSON secret: {e_streamlit_secret}. Using MOCK DB.")
+                db = MockDB(); IS_MOCK_DB = True # Explicitly use MockDB
+        elif db is None: # If neither GAC nor Streamlit Secret worked
+             print("INFO: No valid REAL Firebase Admin credentials found (env var or Streamlit Secret). Using MOCK Firestore.")
+             db = MockDB(); IS_MOCK_DB = True
+    else: # Firebase app already initialized
         db = firestore.client(); IS_MOCK_DB = False
         print("INFO: Firebase Admin SDK already initialized (Real Firestore).")
 
-except (ImportError, Exception) as e: 
-    print(f"WARN: General failure during Firebase Admin SDK init attempts ({type(e).__name__}: {e}). Using MOCK Firestore database.")
+except (ImportError, Exception) as e: # Catch issues like firebase_admin not installed
+    print(f"WARN: Could not initialize REAL Firebase Admin SDK or an error occurred ({type(e).__name__}: {e}). Using MOCK Firestore database.")
     db = MockDB(); IS_MOCK_DB = True
 
-print(f"DB_STATUS: Using {'MockDB' if IS_MOCK_DB else 'Real Firestore'}. Collection path: {USER_CREDENTIALS_COLLECTION}")
+print(f"DB_STATUS: Using {'MockDB (persists in session)' if IS_MOCK_DB else 'Real Firestore'}. Collection path: {USER_CREDENTIALS_COLLECTION}")
 
 
 # --- Gemini Handler (Placeholder) & EDI Maps ---
@@ -119,17 +127,17 @@ except ImportError:
     print("WARNING: 'gemini_handler.py' not found."); LOCAL_SPEC_OPTIONS_MAP = {"Select a Specification...": None}; EDI_SPEC_DETAILS_MAP = {} 
     def get_gemini_response(user_input, spec_option=None, use_gemini_model=True, spec_details=None): return f"(Placeholder) Response to: '{html.escape(user_input)}'"
 
-def load_css(file_path): # Keep CSS loading enabled for now
+def load_css(file_path):
     if os.path.exists(file_path):
         with open(file_path, "r", encoding='utf-8') as f: st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
     else: print(f"Warning: CSS file not found at {file_path}")
 
 def register_user(email, password):
-    print(f"AUTH_FUNC: Attempting to register '{email}' using {'MockDB' if IS_MOCK_DB else 'Real Firestore'}")
+    print(f"AUTH_FUNC_REGISTER: Attempting for '{email}' using {'MockDB' if IS_MOCK_DB else 'Real Firestore'}")
     if not db: st.error("Database service is not available."); return False, "Database error."
     try:
         user_doc_ref = db.collection(USER_CREDENTIALS_COLLECTION).document(email)
-        doc_snapshot = user_doc_ref.get() if not IS_MOCK_DB else user_doc_ref
+        doc_snapshot = user_doc_ref.get() if not IS_MOCK_DB else user_doc_ref 
         print(f"AUTH_FUNC_REGISTER: User '{email}' exists check: {doc_snapshot.exists}")
         if doc_snapshot.exists: return False, "Email already registered."
         user_doc_ref.set({"email": email, "hashed_password": generate_password_hash(password)})
@@ -137,7 +145,7 @@ def register_user(email, password):
     except Exception as e: print(f"ERROR_REGISTER: {e}"); traceback.print_exc(); return False, f"Registration error."
 
 def login_user(email, password):
-    print(f"AUTH_FUNC: Attempting to login '{email}' using {'MockDB' if IS_MOCK_DB else 'Real Firestore'}")
+    print(f"AUTH_FUNC_LOGIN: Attempting for '{email}' using {'MockDB' if IS_MOCK_DB else 'Real Firestore'}")
     if not db: st.error("Database service is not available."); return False, "Database error."
     try:
         user_doc_ref = db.collection(USER_CREDENTIALS_COLLECTION).document(email)
@@ -150,20 +158,18 @@ def login_user(email, password):
                 return True, "Login successful!"
             print(f"AUTH_FUNC_LOGIN: Password mismatch for '{email}'.")
             return False, "Incorrect password."
-        print(f"AUTH_FUNC_LOGIN: Email '{email}' not found. Mock store content: {st.session_state._mock_db_users_store_session_data if IS_MOCK_DB else 'N/A'}")
+        print(f"AUTH_FUNC_LOGIN: Email '{email}' not found. Mock store: {st.session_state._mock_db_users_store_session_data if IS_MOCK_DB else 'N/A'}")
         return False, "Email not found."
     except Exception as e: print(f"ERROR_LOGIN: {e}"); traceback.print_exc(); return False, f"Login error."
 
 def display_login_page():
     print("PAGE_RENDER: display_login_page()")
-    # Ensure this button is always attempted to be rendered
-    if st.button("Don't have an account? Register here.", key="goto_register_btn_main_v5"):
+    if st.button("Don't have an account? Register here.", key="goto_register_btn_main_v6"):
         st.session_state.page = "register"; st.rerun()
-    
     st.subheader("Login")
-    with st.form("login_form_main_v5"): 
-        email = st.text_input("Email", key="login_email_main_v5")
-        password = st.text_input("Password", type="password", key="login_password_main_v5")
+    with st.form("login_form_main_v6"): 
+        email = st.text_input("Email", key="login_email_main_v6")
+        password = st.text_input("Password", type="password", key="login_password_main_v6")
         submit_button = st.form_submit_button("Login")
         if submit_button:
             success, message_text = login_user(email, password)
@@ -175,10 +181,10 @@ def display_login_page():
 def display_register_page():
     print("PAGE_RENDER: display_register_page()")
     st.subheader("Register New Account")
-    with st.form("register_form_main_v5"): 
-        email = st.text_input("Email", key="register_email_main_v5")
-        password = st.text_input("Password", type="password", key="register_password_main_v5")
-        confirm_password = st.text_input("Confirm Password", type="password", key="register_confirm_password_main_v5")
+    with st.form("register_form_main_v6"): 
+        email = st.text_input("Email", key="register_email_main_v6")
+        password = st.text_input("Password", type="password", key="register_password_main_v6")
+        confirm_password = st.text_input("Confirm Password", type="password", key="register_confirm_password_main_v6")
         submit_button = st.form_submit_button("Register")
         if submit_button:
             if not email or not password or not confirm_password: st.error("Please fill all fields.")
@@ -187,33 +193,31 @@ def display_register_page():
                 success, message_text = register_user(email, password)
                 if success: st.success(message_text); st.session_state.page = "login"; st.rerun()
                 else: st.error(message_text)
-    if st.button("Already have an account? Login here.", key="goto_login_btn_main_v5"):
+    if st.button("Already have an account? Login here.", key="goto_login_btn_main_v6"):
         st.session_state.page = "login"; st.rerun()
 
 def display_chat_app_page(): 
     print("PAGE_RENDER: display_chat_app_page()")
-    SELECTED_SPEC_KEY_STATE = "selected_spec_internal_key_v5" 
+    SELECTED_SPEC_KEY_STATE = "selected_spec_internal_key_v6" 
     st.sidebar.subheader(f"Welcome, {st.session_state.get('user_email', 'User').split('@')[0]}!")
-    if st.sidebar.button("Logout", key="logout_btn_chat_main_v5"):
+    if st.sidebar.button("Logout", key="logout_chat_main_v6"):
         st.session_state.logged_in = False; st.session_state.user_email = None; st.session_state.page = "login"
         if "messages" in st.session_state: del st.session_state.messages 
         if SELECTED_SPEC_KEY_STATE in st.session_state: del st.session_state[SELECTED_SPEC_KEY_STATE]
         st.rerun()
-    # ... (Rest of chat page UI: header, toggle, selectbox, messages, input form, footer) ...
-    # This part should be the full chat UI from the version titled "Volvo Cars Chatbot with UI Layout Adjustments v2"
-    # For brevity, I will include only the key parts for this fix.
+    # ... (Rest of chat page UI: header, toggle, selectbox, messages, input form, footer from previous "Full Version") ...
     st.markdown("""<div class="app-header"><h1>Volvo Cars EDI AI Assistant</h1><p>AI Assistant for Suppliers of Volvo Cars EDI</p></div>""", unsafe_allow_html=True)
     if "use_ai_model" not in st.session_state: st.session_state.use_ai_model = True
     if SELECTED_SPEC_KEY_STATE not in st.session_state: st.session_state[SELECTED_SPEC_KEY_STATE] = None
     st.sidebar.markdown("---") 
-    st.session_state.use_ai_model = st.sidebar.toggle("Use AI Model (Gemini)", value=st.session_state.use_ai_model, key="ai_model_toggle_sidebar_v2_final", help="Toggle ON for AI responses. Toggle OFF for local data lookup.")
+    st.session_state.use_ai_model = st.sidebar.toggle("Use AI Model (Gemini)", value=st.session_state.use_ai_model, key="ai_model_toggle_sidebar_v2_final_v6", help="Toggle ON for AI responses. Toggle OFF for local data lookup.")
     current_selected_spec_details_for_handler = None 
     if not st.session_state.use_ai_model:
         display_options_list = list(LOCAL_SPEC_OPTIONS_MAP.keys())
         current_display_value_for_selectbox = "Select a Specification..."
         stored_key = st.session_state.get(SELECTED_SPEC_KEY_STATE)
         if stored_key and stored_key in EDI_SPEC_DETAILS_MAP: current_display_value_for_selectbox = EDI_SPEC_DETAILS_MAP[stored_key]["display"]
-        selected_display_option = st.sidebar.selectbox("Select EDI Specification:", options=display_options_list, index=display_options_list.index(current_display_value_for_selectbox), key="local_spec_selector_sidebar_v2_final")
+        selected_display_option = st.sidebar.selectbox("Select EDI Specification:", options=display_options_list, index=display_options_list.index(current_display_value_for_selectbox), key="local_spec_selector_sidebar_v2_final_v6")
         newly_selected_key = LOCAL_SPEC_OPTIONS_MAP[selected_display_option]
         if newly_selected_key != st.session_state.get(SELECTED_SPEC_KEY_STATE):
             st.session_state[SELECTED_SPEC_KEY_STATE] = newly_selected_key
@@ -229,11 +233,11 @@ def display_chat_app_page():
     with st.container(): 
         if "messages" not in st.session_state: st.session_state.messages = [{"role": "assistant", "content": "Hello! I'm the EDI AI Assistant for Volvo Cars."},{"role": "assistant", "content": "How can I help you today?"}]
         for i, msg_data in enumerate(st.session_state.messages):
-            message(msg_data["content"], is_user=(msg_data["role"] == "user"), key=f"msg_chat_display_session_v2_final_{i}", avatar_style="initials" if msg_data["role"] == "user" else "bottts", seed="User" if msg_data["role"] == "user" else "AI")
+            message(msg_data["content"], is_user=(msg_data["role"] == "user"), key=f"msg_chat_display_session_v2_final_v6_{i}", avatar_style="initials" if msg_data["role"] == "user" else "bottts", seed="User" if msg_data["role"] == "user" else "AI")
     st.markdown('</div>', unsafe_allow_html=True)
     st.markdown('<div class="sticky-input-area">', unsafe_allow_html=True)
-    with st.form("user_input_form_chat_session_v2_final", clear_on_submit=True): 
-        user_input_value = st.text_input("Ask me anything!", key="user_input_widget_chat_session_v2_final", placeholder="Ask me anything!", label_visibility="collapsed")
+    with st.form("user_input_form_chat_session_v2_final_v6", clear_on_submit=True): 
+        user_input_value = st.text_input("Ask me anything!", key="user_input_widget_chat_session_v2_final_v6", placeholder="Ask me anything!", label_visibility="collapsed")
         submitted = st.form_submit_button("✈️") 
     with st.container(): 
         st.markdown("""<div class="footer-text"><p>Volvo Cars EDI AI Assistant provides AI-generated responses. Please verify important information.</p><p>© Copyright AB Volvo 2025 &nbsp;|&nbsp;<a href="#">Privacy</a> &nbsp;|&nbsp;<a href="https://www.volvocars.com">www.volvocars.com</a></p></div>""", unsafe_allow_html=True)
@@ -253,10 +257,9 @@ def display_chat_app_page():
         st.session_state.messages.append({"role": "assistant", "content": assistant_response})
         st.rerun()
 
-
 def main():
-    st.set_page_config(layout="centered", page_title="Volvo Cars EDI AI Assistant - Auth Debug v5")
-    load_css(os.path.join("assets", "style.css")) # Re-enable CSS loading
+    st.set_page_config(layout="centered", page_title="Volvo Cars EDI AI Assistant - Auth Debug v6")
+    load_css(os.path.join("assets", "style.css")) 
 
     if "page" not in st.session_state: st.session_state.page = "login" 
     if "logged_in" not in st.session_state: st.session_state.logged_in = False
@@ -264,13 +267,9 @@ def main():
     
     print(f"DEBUG_MAIN_APP: In main() - Current page: '{st.session_state.page}', Logged in: {st.session_state.logged_in}, DB is MOCK: {IS_MOCK_DB}")
     
-    if st.session_state.get('logged_in'): 
-        display_chat_app_page()
-    elif st.session_state.get('page') == "register":
-        display_register_page()
-    else: # Default to login
-        st.session_state.page = "login" 
-        display_login_page()
+    if st.session_state.get('logged_in'): display_chat_app_page()
+    elif st.session_state.get('page') == "register": display_register_page()
+    else: st.session_state.page = "login"; display_login_page()
 
 if __name__ == "__main__":
     main()

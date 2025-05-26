@@ -92,10 +92,10 @@ try:
                 print(f"WARN: GOOGLE_APPLICATION_CREDENTIALS path does not exist: {google_app_creds_path}. Will try Streamlit secrets or mock.")
         
         # 2. Try Streamlit Secrets (for deployed environment like Streamlit Cloud)
-        if not cred_initialized and "FIREBASE_SERVICE_ACCOUNT_JSON_CONTENT" in st.secrets:
+        if not cred_initialized and "FIREBASE_SERVICE_ACCOUNT_JSON" in st.secrets:
             print("FIREBASE_INIT: GOOGLE_APPLICATION_CREDENTIALS not used or failed. Trying Streamlit Secret.")
             try:
-                cred_json_str = st.secrets["FIREBASE_SERVICE_ACCOUNT_JSON_CONTENT"]
+                cred_json_str = st.secrets["FIREBASE_SERVICE_ACCOUNT_JSON"]
                 cred_dict = json.loads(cred_json_str)
                 cred = credentials.Certificate(cred_dict)
                 # Check if an app is already initialized (might happen with st.secrets in some contexts)
@@ -111,7 +111,7 @@ try:
                     pass # db = firestore.client() will use the existing default app.
 
                 db = firestore.client(); IS_MOCK_DB = False
-                print("SUCCESS: Firebase Admin SDK initialized from Streamlit Secret (FIREBASE_SERVICE_ACCOUNT_JSON_CONTENT).")
+                print("SUCCESS: Firebase Admin SDK initialized from Streamlit Secret (FIREBASE_SERVICE_ACCOUNT_JSON).")
                 cred_initialized = True
             except Exception as e_streamlit_secret:
                 print(f"WARN: Failed to init Firebase from Streamlit JSON secret: {e_streamlit_secret}")

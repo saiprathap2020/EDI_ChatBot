@@ -8,11 +8,15 @@ import traceback
 # For password hashing
 from werkzeug.security import generate_password_hash, check_password_hash
 
+# --- Session State Initialization for Mock DB ---
+if "_mock_db_users_store" not in st.session_state: # Changed key to avoid conflict with global
+    st.session_state._mock_db_users_store_session_data = {} # Use a distinct key for session state
+    print(f"INFO: Initializing MOCK Firestore IN SESSION_STATE. Initial store: {st.session_state._mock_db_users_store_session_data}")
+
 # --- Firebase Initialization ---
 app_id_global = 'default-app-id-local-dev' 
 db = None 
-IS_MOCK_DB = False # Flag to track if we are using the mock
-
+IS_MOCK_DB = True # Assume mock initially
 print(f"--- SCRIPT START ---")
 
 if '__app_id' in globals():
@@ -22,12 +26,8 @@ else:
     print(f"LOCAL_ENV: __app_id not found in globals, using default: {app_id_global}")
 
 try:
-    _mock_db_users_store = {} 
-    if "_mock_db_users_store_session" not in st.session_state: # Persist mock store in session
-        st.session_state._mock_db_users_store_session = {}
-        print(f"INFO: Initializing MOCK Firestore store IN SESSION_STATE. Initial: {st.session_state._mock_db_users_store_session}")
-    _mock_db_users_store = st.session_state._mock_db_users_store_session # Use the session state version
-
+    # Use the session state version for the mock store
+    _mock_db_users_store = st.session_state._mock_db_users_store_session_data 
 
     class MockFirestoreDocument:
         def __init__(self, doc_id, data=None):
@@ -38,23 +38,27 @@ try:
         def exists(self): return self._exists
         def set(self, data_to_set):
             if self.id:
-                st.session_state._mock_db_users_store_session[self.id] = data_to_set 
+                st.session_state._mock_db_users_store_session_data[self.id] = data_to_set # Write to session state store
                 self._data = data_to_set; self._exists = True
-                print(f"MOCK_DB_SET (Session): User '{self.id}'. Current store: {st.session_state._mock_db_users_store_session}")
-            else: print("MOCK_DB_SET_ERROR: Document ID is None.")
+                print(f"MOCK_DB_SET (Session): User '{self.id}', Data: {data_to_set}. Current store: {st.session_state._mock_db_users_store_session_data}")
+            else:
+                print("MOCK_DB_SET_ERROR: Document ID is None.")
 
     class MockFirestoreQuery: 
         def __init__(self, field, op, value):
             self._results = []
-            if field == "email" and op == "==" and value in st.session_state._mock_db_users_store_session:
-                self._results.append(MockFirestoreDocument(value, st.session_state._mock_db_users_store_session[value]))
+            # Read from session state store
+            if field == "email" and op == "==" and value in st.session_state._mock_db_users_store_session_data:
+                self._results.append(MockFirestoreDocument(value, st.session_state._mock_db_users_store_session_data[value]))
         def stream(self): return self._results
         def get(self): return self._results
 
     class MockFirestoreCollection:
         def document(self, doc_id=None): 
-            if doc_id: return MockFirestoreDocument(doc_id, st.session_state._mock_db_users_store_session.get(doc_id))
-            raise ValueError("Mock document requires an ID for user collection.")
+            if doc_id:
+                # Read from session state store
+                return MockFirestoreDocument(doc_id, st.session_state._mock_db_users_store_session_data.get(doc_id))
+            raise ValueError("Mock document requires an ID for this user collection pattern.")
         def where(self, field, op, value): return MockFirestoreQuery(field, op, value)
 
     class MockDB: 
@@ -76,13 +80,12 @@ try:
                     cred_dict = json.loads(cred_json_str)
                     cred = credentials.Certificate(cred_dict)
                     firebase_admin.initialize_app(cred)
-                    db = firestore.client()
+                    db = firestore.client(); IS_MOCK_DB = False
                     print("SUCCESS: Firebase Admin SDK initialized from Streamlit Secret.")
-                    IS_MOCK_DB = False
                     cred_initialized = True
                 except Exception as e_streamlit_secret:
                     print(f"WARN: Failed to init Firebase from Streamlit JSON secret: {e_streamlit_secret}")
-
+            
             # 2. Fallback to GOOGLE_APPLICATION_CREDENTIALS env var (for local/other deployments)
             if not cred_initialized and os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
                 try:
@@ -111,7 +114,6 @@ except Exception as e:
 USER_CREDENTIALS_COLLECTION = f"artifacts/{app_id_global}/user_auth_credentials"
 print(f"DB_STATUS: Using {'MockDB' if IS_MOCK_DB else 'Real Firestore'}. Collection path: {USER_CREDENTIALS_COLLECTION}")
 
-
 try:
     from gemini_handler import get_gemini_response
     EDI_SPEC_DETAILS_MAP = { 
@@ -136,13 +138,14 @@ def register_user(email, password):
     if not db: st.error("Database service is not available (register_user)."); return False, "Database service not available."
     try:
         user_doc_ref = db.collection(USER_CREDENTIALS_COLLECTION).document(email)
-        user_doc_snapshot = user_doc_ref.get() if not IS_MOCK_DB else user_doc_ref # Mock returns self on .document()
-        print(f"DEBUG_REGISTER: Checked for existing user '{email}'. Exists in DB: {user_doc_snapshot.exists}")
+        # For real Firestore, .get() is needed. For mock, .document() already "gets" it.
+        user_doc_snapshot = user_doc_ref.get() if not IS_MOCK_DB else user_doc_ref 
+        print(f"DEBUG_REGISTER: Checking for existing user '{email}'. Exists in DB: {user_doc_snapshot.exists}")
         if user_doc_snapshot.exists: 
             print(f"DEBUG_REGISTER: Email '{email}' already exists.")
             return False, "Email already registered."
         hashed_password = generate_password_hash(password)
-        user_doc_ref.set({"email": email, "hashed_password": hashed_password}) 
+        user_doc_ref.set({"email": email, "hashed_password": hashed_password}) # .set() is on the DocumentReference
         print(f"DEBUG_REGISTER: Registration successful for '{email}'.")
         return True, "Registration successful! Please login."
     except Exception as e: print(f"ERROR_REGISTER: {e}"); traceback.print_exc(); return False, f"Registration failed: An unexpected error occurred."
@@ -152,7 +155,7 @@ def login_user(email, password):
     if not db: st.error("Database service is not available (login_user)."); return False, "Database service not available."
     try:
         user_doc_ref = db.collection(USER_CREDENTIALS_COLLECTION).document(email)
-        user_doc_snapshot = user_doc_ref.get() if not IS_MOCK_DB else user_doc_ref # Mock returns self on .document()
+        user_doc_snapshot = user_doc_ref.get() if not IS_MOCK_DB else user_doc_ref 
         print(f"DEBUG_LOGIN: Checked for user '{email}'. Exists in DB: {user_doc_snapshot.exists}")
         if user_doc_snapshot.exists: 
             user_data = user_doc_snapshot.to_dict()
@@ -162,21 +165,23 @@ def login_user(email, password):
                 return True, "Login successful!"
             print(f"DEBUG_LOGIN: Password MISMATCH for '{email}'")
             return False, "Incorrect password."
-        print(f"DEBUG_LOGIN: Email '{email}' not found in {'Mock Store' if IS_MOCK_DB else 'Firestore'}.")
-        if IS_MOCK_DB: print(f"Current Mock Store: {st.session_state._mock_db_users_store_session}")
+        print(f"DEBUG_LOGIN: Email '{email}' not found in {'Mock Store (session)' if IS_MOCK_DB else 'Firestore'}.")
+        if IS_MOCK_DB: print(f"Current Mock Store state: {st.session_state._mock_db_users_store_session_data}")
         return False, "Email not found."
     except Exception as e: print(f"ERROR_LOGIN: {e}"); traceback.print_exc(); return False, f"Login failed: An unexpected error occurred."
 
 def display_login_page():
     print("DEBUG_MAIN_APP: >>> display_login_page() CALLED <<<") 
-    if st.button("Don't have an account? Register here.", key="goto_register_btn_final_v3"):
+    if st.button("Don't have an account? Register here.", key="goto_register_btn_session_debug_v2"):
+        print("DEBUG_MAIN_APP: 'Register here' (top) button CLICKED.") 
         st.session_state.page = "register"; st.rerun()
-    st.subheader("Login") 
-    with st.form("login_form_final_v3"): 
-        email = st.text_input("Email", key="login_email_final_v3")
-        password = st.text_input("Password", type="password", key="login_password_final_v3")
+    st.subheader("Login")
+    with st.form("login_form_session_debug_v2"): 
+        email = st.text_input("Email", key="login_email_session_debug_v2")
+        password = st.text_input("Password", type="password", key="login_password_session_debug_v2")
         submit_button = st.form_submit_button("Login")
         if submit_button:
+            print(f"DEBUG_LOGIN_FORM: Login form submitted with email: {email}")
             if not email or not password: st.error("Please enter both email and password.")
             else:
                 success, message_text = login_user(email, password)
@@ -189,34 +194,35 @@ def display_login_page():
 def display_register_page():
     print("DEBUG_MAIN_APP: >>> display_register_page() CALLED <<<") 
     st.subheader("Register New Account")
-    with st.form("register_form_final_v3"): 
-        email = st.text_input("Email", key="register_email_final_v3")
-        password = st.text_input("Password", type="password", key="register_password_final_v3")
-        confirm_password = st.text_input("Confirm Password", type="password", key="register_confirm_password_final_v3")
+    with st.form("register_form_session_debug_v2"): 
+        email = st.text_input("Email", key="register_email_session_debug_v2")
+        password = st.text_input("Password", type="password", key="register_password_session_debug_v2")
+        confirm_password = st.text_input("Confirm Password", type="password", key="register_confirm_password_session_debug_v2")
         submit_button = st.form_submit_button("Register")
         if submit_button:
+            print(f"DEBUG_REGISTER_FORM: Register form submitted with email: {email}")
             if not email or not password or not confirm_password: st.error("Please fill in all fields.")
             elif password != confirm_password: st.error("Passwords do not match.")
             else:
                 success, message_text = register_user(email, password)
                 if success: st.success(message_text); st.session_state.page = "login"; st.rerun()
                 else: st.error(message_text)
-    if st.button("Already have an account? Login here.", key="goto_login_btn_final_v3"):
+    if st.button("Already have an account? Login here.", key="goto_login_btn_session_debug_v2"):
         st.session_state.page = "login"; st.rerun()
     print("DEBUG_MAIN_APP: >>> display_register_page() FINISHED <<<") 
 
 def display_chat_app_page(): 
-    # ... (Chat page code remains the same as in "Volvo Cars Chatbot with User Authentication (Full Version)")
-    # For brevity, I'm not repeating the full chat page UI here.
-    # Ensure it uses unique keys for its widgets.
-    print("DEBUG_MAIN_APP: >>> display_chat_app_page() CALLED <<<") 
+    # ... (Full chat page code as in "Volvo Cars Chatbot with Auth (Detailed DB Debug)")
+    # This includes sidebar, toggle, selectbox, message display, input form.
+    # For brevity, only showing the start and end prints.
+    print("DEBUG_MAIN_APP: >>> display_chat_app_page() CALLED <<<")
     SELECTED_SPEC_KEY_STATE = "selected_spec_internal_key" 
     username_display = "User" 
     if st.session_state.get("user_email"):
         try: username_display = st.session_state.user_email.split('@')[0]
         except: pass 
     st.sidebar.subheader(f"Welcome, {username_display}!")
-    if st.sidebar.button("Logout", key="logout_chat_final_v3"):
+    if st.sidebar.button("Logout", key="logout_chat_session_debug_v2"): # Unique key
         st.session_state.logged_in = False; st.session_state.user_email = None; st.session_state.page = "login"
         if "messages" in st.session_state: del st.session_state.messages 
         if SELECTED_SPEC_KEY_STATE in st.session_state: del st.session_state[SELECTED_SPEC_KEY_STATE]
@@ -224,41 +230,35 @@ def display_chat_app_page():
     st.markdown("""<div class="app-header"><h1>Volvo Cars EDI AI Assistant</h1><p>AI Assistant for Suppliers of Volvo Cars EDI</p></div>""", unsafe_allow_html=True)
     if "use_ai_model" not in st.session_state: st.session_state.use_ai_model = True
     if SELECTED_SPEC_KEY_STATE not in st.session_state: st.session_state[SELECTED_SPEC_KEY_STATE] = None
-    col1_toggle, col_toggle_main, col3_toggle = st.columns([0.2, 0.6, 0.2])
-    with col_toggle_main:
-        ai_model_toggled_on = st.toggle("Use AI Model (Gemini)", value=st.session_state.use_ai_model, key="ai_model_toggle_chat_final_v3", help="Toggle ON for AI responses. Toggle OFF for local data lookup.")
-        if ai_model_toggled_on != st.session_state.use_ai_model:
-            st.session_state.use_ai_model = ai_model_toggled_on; st.rerun()
+    st.sidebar.markdown("---") 
+    st.session_state.use_ai_model = st.sidebar.toggle("Use AI Model (Gemini)", value=st.session_state.use_ai_model, key="ai_model_toggle_sidebar_v2_final", help="Toggle ON for AI responses. Toggle OFF for local data lookup.")
     current_selected_spec_details_for_handler = None 
     if not st.session_state.use_ai_model:
-        col1_select, col_select_main, col3_select = st.columns([0.1, 0.8, 0.1])
-        with col_select_main:
-            display_options_list = list(LOCAL_SPEC_OPTIONS_MAP.keys())
-            current_display_value_for_selectbox = "Select a Specification..."
-            stored_key = st.session_state.get(SELECTED_SPEC_KEY_STATE)
-            if stored_key and stored_key in EDI_SPEC_DETAILS_MAP:
-                current_display_value_for_selectbox = EDI_SPEC_DETAILS_MAP[stored_key]["display"]
-            selected_display_option = st.selectbox("Select EDI Specification for Local Data:", options=display_options_list, index=display_options_list.index(current_display_value_for_selectbox), key="local_spec_selector_chat_final_v3")
-            newly_selected_key = LOCAL_SPEC_OPTIONS_MAP[selected_display_option]
-            if newly_selected_key != st.session_state.get(SELECTED_SPEC_KEY_STATE):
-                st.session_state[SELECTED_SPEC_KEY_STATE] = newly_selected_key
-                if newly_selected_key and newly_selected_key in EDI_SPEC_DETAILS_MAP: 
-                    current_selected_spec_details_for_handler = EDI_SPEC_DETAILS_MAP[newly_selected_key]
-                    if "messages" not in st.session_state: st.session_state.messages = []
-                    st.session_state.messages.append({"role": "user", "content": f"Show information for {current_selected_spec_details_for_handler['display']}"})
-                st.rerun() 
-            if st.session_state.get(SELECTED_SPEC_KEY_STATE) and st.session_state[SELECTED_SPEC_KEY_STATE] in EDI_SPEC_DETAILS_MAP:
-                 current_selected_spec_details_for_handler = EDI_SPEC_DETAILS_MAP.get(st.session_state[SELECTED_SPEC_KEY_STATE])
+        display_options_list = list(LOCAL_SPEC_OPTIONS_MAP.keys())
+        current_display_value_for_selectbox = "Select a Specification..."
+        stored_key = st.session_state.get(SELECTED_SPEC_KEY_STATE)
+        if stored_key and stored_key in EDI_SPEC_DETAILS_MAP: current_display_value_for_selectbox = EDI_SPEC_DETAILS_MAP[stored_key]["display"]
+        selected_display_option = st.sidebar.selectbox("Select EDI Specification:", options=display_options_list, index=display_options_list.index(current_display_value_for_selectbox), key="local_spec_selector_sidebar_v2_final")
+        newly_selected_key = LOCAL_SPEC_OPTIONS_MAP[selected_display_option]
+        if newly_selected_key != st.session_state.get(SELECTED_SPEC_KEY_STATE):
+            st.session_state[SELECTED_SPEC_KEY_STATE] = newly_selected_key
+            if newly_selected_key and newly_selected_key in EDI_SPEC_DETAILS_MAP: 
+                current_selected_spec_details_for_handler = EDI_SPEC_DETAILS_MAP[newly_selected_key]
+                if "messages" not in st.session_state: st.session_state.messages = []
+                st.session_state.messages.append({"role": "user", "content": f"Show information for {current_selected_spec_details_for_handler['display']}"})
+            st.rerun() 
+        if st.session_state.get(SELECTED_SPEC_KEY_STATE) and st.session_state[SELECTED_SPEC_KEY_STATE] in EDI_SPEC_DETAILS_MAP:
+             current_selected_spec_details_for_handler = EDI_SPEC_DETAILS_MAP.get(st.session_state[SELECTED_SPEC_KEY_STATE])
     st.markdown("<hr>", unsafe_allow_html=True)
     st.markdown('<div class="chat-messages-area" id="chat-messages-area-streamlit-chat">', unsafe_allow_html=True)
     with st.container(): 
         if "messages" not in st.session_state: st.session_state.messages = [{"role": "assistant", "content": "Hello! I'm the EDI AI Assistant for Volvo Cars."},{"role": "assistant", "content": "How can I help you today?"}]
         for i, msg_data in enumerate(st.session_state.messages):
-            message(msg_data["content"], is_user=(msg_data["role"] == "user"), key=f"msg_chat_display_final_v3_{i}", avatar_style="initials" if msg_data["role"] == "user" else "bottts", seed="User" if msg_data["role"] == "user" else "AI")
+            message(msg_data["content"], is_user=(msg_data["role"] == "user"), key=f"msg_chat_display_session_v2_final_{i}", avatar_style="initials" if msg_data["role"] == "user" else "bottts", seed="User" if msg_data["role"] == "user" else "AI")
     st.markdown('</div>', unsafe_allow_html=True)
     st.markdown('<div class="sticky-input-area">', unsafe_allow_html=True)
-    with st.form("user_input_form_chat_final_v3", clear_on_submit=True): 
-        user_input_value = st.text_input("Ask me anything!", key="user_input_widget_chat_final_v3", placeholder="Ask me anything!", label_visibility="collapsed")
+    with st.form("user_input_form_chat_session_v2_final", clear_on_submit=True): 
+        user_input_value = st.text_input("Ask me anything!", key="user_input_widget_chat_session_v2_final", placeholder="Ask me anything!", label_visibility="collapsed")
         submitted = st.form_submit_button("✈️") 
     with st.container(): 
         st.markdown("""<div class="footer-text"><p>Volvo Cars EDI AI Assistant provides AI-generated responses. Please verify important information.</p><p>© Copyright AB Volvo 2025 &nbsp;|&nbsp;<a href="#">Privacy</a> &nbsp;|&nbsp;<a href="https://www.volvocars.com">www.volvocars.com</a></p></div>""", unsafe_allow_html=True)
@@ -279,9 +279,8 @@ def display_chat_app_page():
         st.rerun()
     print("DEBUG_MAIN_APP: >>> display_chat_app_page() FINISHED <<<") 
 
-
 def main():
-    st.set_page_config(layout="centered", page_title="Volvo Cars EDI AI Assistant - Auth Debug v4")
+    st.set_page_config(layout="centered", page_title="Volvo Cars EDI AI Assistant - Auth Debug v4") 
     load_css(os.path.join("assets", "style.css")) 
 
     if "page" not in st.session_state:

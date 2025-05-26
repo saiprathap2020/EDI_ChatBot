@@ -8,111 +8,112 @@ import traceback
 # For password hashing
 from werkzeug.security import generate_password_hash, check_password_hash
 
-# --- Session State Initialization for Mock DB & App State ---
-if "_mock_db_users_store_session_data" not in st.session_state:
-    st.session_state._mock_db_users_store_session_data = {}
-    print(f"INFO: Initializing MOCK Firestore store IN SESSION_STATE. Initial store: {st.session_state._mock_db_users_store_session_data}")
-
-if "page" not in st.session_state:
-    st.session_state.page = "login" 
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-if "user_email" not in st.session_state:
-    st.session_state.user_email = None
+# --- Session State Initialization for Mock DB ---
+if "_mock_db_users_store_session_data" not in st.session_state: # Use a distinct name
+    st.session_state._mock_db_users_store_session_data = {} # Use a distinct key for session state
+    print(f"INFO: Initializing MOCK Firestore IN SESSION_STATE. Initial store: {st.session_state._mock_db_users_store_session_data}")
 
 # --- Firebase Initialization ---
 app_id_global = 'default-app-id-local-dev' 
 db = None 
-IS_MOCK_DB = True # Assume mock until real Firebase initializes successfully
-
+IS_MOCK_DB = True # Assume mock initially
 print(f"--- SCRIPT START (Auth Debug v6) ---")
-if '__app_id' in globals(): app_id_global = globals()['__app_id']
+
+if '__app_id' in globals():
+    app_id_global = globals()['__app_id']
+    print(f"CANVAS_ENV: Using provided __app_id: {app_id_global}")
+else:
+    print(f"LOCAL_ENV: __app_id not found in globals, using default: {app_id_global}")
+
+try:
+    # Use the session state version for the mock store
+    _mock_db_users_store = st.session_state._mock_db_users_store_session_data 
+
+    class MockFirestoreDocument:
+        def __init__(self, doc_id, data=None):
+            self.id = doc_id; self._data = data if data is not None else {}; self._exists = data is not None
+        def get(self): return self 
+        def to_dict(self): return self._data
+        @property 
+        def exists(self): return self._exists
+        def set(self, data_to_set):
+            if self.id:
+                st.session_state._mock_db_users_store_session_data[self.id] = data_to_set # Write to session state store
+                self._data = data_to_set; self._exists = True
+                print(f"MOCK_DB_SET (Session): User '{self.id}', Data: {data_to_set}. Current store: {st.session_state._mock_db_users_store_session_data}")
+            else:
+                print("MOCK_DB_SET_ERROR: Document ID is None.")
+
+    class MockFirestoreQuery: 
+        def __init__(self, field, op, value):
+            self._results = []
+            # Read from session state store
+            if field == "email" and op == "==" and value in st.session_state._mock_db_users_store_session_data:
+                self._results.append(MockFirestoreDocument(value, st.session_state._mock_db_users_store_session_data[value]))
+        def stream(self): return self._results
+        def get(self): return self._results
+
+    class MockFirestoreCollection:
+        def document(self, doc_id=None): 
+            if doc_id:
+                # Read from session state store
+                return MockFirestoreDocument(doc_id, st.session_state._mock_db_users_store_session_data.get(doc_id))
+            raise ValueError("Mock document requires an ID for this user collection pattern.")
+        def where(self, field, op, value): return MockFirestoreQuery(field, op, value)
+
+    class MockDB: 
+        def collection(self, collection_name): 
+            print(f"MOCK_DB_ACCESS: Using MockDB for collection '{collection_name}'")
+            return MockFirestoreCollection()
+
+    try:
+        print("FIREBASE_INIT: Attempting to initialize Firebase Admin SDK...")
+        import firebase_admin
+        from firebase_admin import credentials, firestore
+        
+        if not firebase_admin._apps:
+            cred_initialized = False
+            # 1. Try Streamlit Secrets (for deployed environment)
+            if "FIREBASE_SERVICE_ACCOUNT_JSON_CONTENT" in st.secrets:
+                try:
+                    cred_json_str = st.secrets["FIREBASE_SERVICE_ACCOUNT_JSON_CONTENT"]
+                    cred_dict = json.loads(cred_json_str)
+                    cred = credentials.Certificate(cred_dict)
+                    firebase_admin.initialize_app(cred)
+                    db = firestore.client(); IS_MOCK_DB = False
+                    print("SUCCESS: Firebase Admin SDK initialized from Streamlit Secret.")
+                    cred_initialized = True
+                except Exception as e_streamlit_secret:
+                    print(f"WARN: Failed to init Firebase from Streamlit JSON secret: {e_streamlit_secret}")
+            
+            # 2. Fallback to GOOGLE_APPLICATION_CREDENTIALS env var (for local/other deployments)
+            if not cred_initialized and os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
+                try:
+                    print(f"FIREBASE_INIT: Found GOOGLE_APPLICATION_CREDENTIALS: {os.getenv('GOOGLE_APPLICATION_CREDENTIALS')}")
+                    cred = credentials.ApplicationDefault(); firebase_admin.initialize_app(cred); db = firestore.client()
+                    print("SUCCESS: Firebase Admin SDK initialized using GOOGLE_APPLICATION_CREDENTIALS env var.")
+                    IS_MOCK_DB = False
+                    cred_initialized = True
+                except Exception as e_gac:
+                    print(f"WARN: Failed to init Firebase from GOOGLE_APPLICATION_CREDENTIALS: {e_gac}")
+            
+            if not cred_initialized:
+                print("INFO: No valid REAL Firebase Admin credentials found. Will use MOCK Firestore.")
+                raise EnvironmentError("No Firebase credentials for Admin SDK.")
+        else:
+            db = firestore.client(); IS_MOCK_DB = False
+            print("INFO: Firebase Admin SDK already initialized (Real Firestore).")
+    except (ImportError, EnvironmentError, Exception) as e: 
+        print(f"WARN: Could not initialize REAL Firebase Admin SDK ({type(e).__name__}: {e}). Using MOCK Firestore database.")
+        db = MockDB(); IS_MOCK_DB = True
+except Exception as e: 
+    print(f"CRITICAL_ERROR: Outer Firebase/Mock initialization block failed: {e}."); traceback.print_exc()
+    if db is None: 
+        print("EMERGENCY_FALLBACK: Using MOCK Firestore database."); db = MockDB(); IS_MOCK_DB = True
 
 USER_CREDENTIALS_COLLECTION = f"artifacts/{app_id_global}/user_auth_credentials_debug_v2" # Using a distinct collection for clarity
-
-class MockFirestoreDocument:
-    def __init__(self, doc_id, data=None):
-        self.id = doc_id; self._data = data if data is not None else {}; self._exists = data is not None
-    def get(self): return self 
-    def to_dict(self): return self._data
-    @property 
-    def exists(self): return self._exists
-    def set(self, data_to_set):
-        if self.id:
-            st.session_state._mock_db_users_store_session_data[self.id] = data_to_set 
-            self._data = data_to_set; self._exists = True
-            print(f"MOCK_DB_SET (Session): User '{self.id}'. Store: {st.session_state._mock_db_users_store_session_data}")
-        else: print("MOCK_DB_SET_ERROR: Document ID is None.")
-
-class MockFirestoreQuery: 
-    def __init__(self, field, op, value):
-        self._results = []
-        if field == "email" and op == "==" and value in st.session_state._mock_db_users_store_session_data:
-            self._results.append(MockFirestoreDocument(value, st.session_state._mock_db_users_store_session_data[value]))
-    def stream(self): return self._results; 
-    def get(self): return self._results
-
-class MockFirestoreCollection:
-    def document(self, doc_id=None): 
-        if doc_id: return MockFirestoreDocument(doc_id, st.session_state._mock_db_users_store_session_data.get(doc_id))
-        raise ValueError("Mock document requires an ID for user collection.")
-    def where(self, field, op, value): return MockFirestoreQuery(field, op, value)
-
-class MockDB: 
-    def collection(self, collection_name): 
-        print(f"MOCK_DB_ACCESS: Using MockDB for collection '{collection_name}'")
-        return MockFirestoreCollection()
-
-# --- Firebase Admin SDK Initialization Logic ---
-try:
-    print("FIREBASE_INIT: Attempting to initialize Firebase Admin SDK...")
-    google_app_creds = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-    streamlit_secret_firebase_json = st.secrets.get("FIREBASE_SERVICE_ACCOUNT_JSON_CONTENT") if "FIREBASE_SERVICE_ACCOUNT_JSON_CONTENT" in st.secrets else None
-
-    import firebase_admin
-    from firebase_admin import credentials, firestore
-    
-    if not firebase_admin._apps:
-        cred = None
-        if google_app_creds:
-            print(f"FIREBASE_INIT: Found GOOGLE_APPLICATION_CREDENTIALS env var: {google_app_creds}")
-            try:
-                cred = credentials.ApplicationDefault()
-                firebase_admin.initialize_app(cred)
-                db = firestore.client()
-                IS_MOCK_DB = False
-                print("SUCCESS: Firebase Admin SDK initialized using GOOGLE_APPLICATION_CREDENTIALS.")
-            except Exception as e_gac:
-                print(f"WARN: Failed to init Firebase from GOOGLE_APPLICATION_CREDENTIALS: {e_gac}. Will try secrets or mock.")
-                db = None # Ensure db is reset if GAC init fails
-        
-        if db is None and streamlit_secret_firebase_json: # If GAC failed or not set, try Streamlit Secret
-            print("FIREBASE_INIT: GOOGLE_APPLICATION_CREDENTIALS failed or not set. Trying Streamlit Secret FIREBASE_SERVICE_ACCOUNT_JSON_CONTENT.")
-            try:
-                cred_dict = json.loads(streamlit_secret_firebase_json)
-                cred = credentials.Certificate(cred_dict)
-                firebase_admin.initialize_app(cred) # This might error if already initialized by failed GAC
-                db = firestore.client()
-                IS_MOCK_DB = False
-                print("SUCCESS: Firebase Admin SDK initialized from Streamlit Secret.")
-            except Exception as e_streamlit_secret:
-                print(f"WARN: Failed to init Firebase from Streamlit JSON secret: {e_streamlit_secret}. Using MOCK DB.")
-                db = MockDB(); IS_MOCK_DB = True # Explicitly use MockDB
-        elif db is None: # If neither GAC nor Streamlit Secret worked
-             print("INFO: No valid REAL Firebase Admin credentials found (env var or Streamlit Secret). Using MOCK Firestore.")
-             db = MockDB(); IS_MOCK_DB = True
-    else: # Firebase app already initialized
-        db = firestore.client(); IS_MOCK_DB = False
-        print("INFO: Firebase Admin SDK already initialized (Real Firestore).")
-
-except (ImportError, Exception) as e: # Catch issues like firebase_admin not installed
-    print(f"WARN: Could not initialize REAL Firebase Admin SDK or an error occurred ({type(e).__name__}: {e}). Using MOCK Firestore database.")
-    db = MockDB(); IS_MOCK_DB = True
-
 print(f"DB_STATUS: Using {'MockDB (persists in session)' if IS_MOCK_DB else 'Real Firestore'}. Collection path: {USER_CREDENTIALS_COLLECTION}")
 
-
-# --- Gemini Handler (Placeholder) & EDI Maps ---
 try:
     from gemini_handler import get_gemini_response
     EDI_SPEC_DETAILS_MAP = { 

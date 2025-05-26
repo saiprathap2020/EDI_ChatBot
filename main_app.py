@@ -21,28 +21,15 @@ print(f"INFO: Using app_id_global: {app_id_global}")
 
 class MockFirestoreDocument:
     def __init__(self, doc_id, data=None):
-        self.id = doc_id
-        self._data = data if data is not None else {}
-        self._exists = data is not None 
-        # print(f"MOCK_DOC_INIT: ID='{self.id}', Data='{self._data}', Exists={self._exists}") # Can be noisy
-
-    def get(self): 
-        # print(f"MOCK_DOC_GET: ID='{self.id}', Exists={self.exists}")
-        return self 
-    
-    def to_dict(self):
-        return self._data
-    
+        self.id = doc_id; self._data = data if data is not None else {}; self._exists = data is not None
+    def get(self): return self 
+    def to_dict(self): return self._data
     @property 
-    def exists(self): 
-        return self._exists
-    
+    def exists(self): return self._exists
     def set(self, data_to_set):
-        # Access mock store from session_state
         if self.id:
-            st.session_state._mock_db_users_store[self.id] = data_to_set
-            self._data = data_to_set
-            self._exists = True 
+            st.session_state._mock_db_users_store[self.id] = data_to_set # Use session_state store
+            self._data = data_to_set; self._exists = True
             print(f"MOCK_DB_SET (Session): User '{self.id}', Data: {data_to_set}. Current store: {st.session_state._mock_db_users_store}")
         else:
             print("MOCK_DB_SET_ERROR: Document ID is None, cannot set.")
@@ -51,32 +38,25 @@ class MockFirestoreDocument:
 class MockFirestoreQuery: 
     def __init__(self, field, op, value):
         self._results = []
-        # Access mock store from session_state
-        # print(f"MOCK_QUERY_INIT: Field='{field}', Op='{op}', Value='{value}', Store='{st.session_state._mock_db_users_store}'")
-        if field == "email" and op == "==" and value in st.session_state._mock_db_users_store:
+        if field == "email" and op == "==" and value in st.session_state._mock_db_users_store: # Use session_state store
             self._results.append(MockFirestoreDocument(value, st.session_state._mock_db_users_store[value]))
-        # print(f"MOCK_QUERY_INIT: Results count: {len(self._results)}")
     def stream(self): return self._results
     def get(self): return self._results
 
 class MockFirestoreCollection:
     def document(self, doc_id=None): 
-        # print(f"MOCK_COLLECTION_DOC: Accessing document '{doc_id}'")
         if doc_id:
-            # Access mock store from session_state
-            return MockFirestoreDocument(doc_id, st.session_state._mock_db_users_store.get(doc_id))
+            return MockFirestoreDocument(doc_id, st.session_state._mock_db_users_store.get(doc_id)) # Use session_state store
         raise ValueError("Mock document requires an ID for this user collection pattern.")
     def where(self, field, op, value): return MockFirestoreQuery(field, op, value)
 
 class MockDB: 
     def collection(self, collection_name): 
-        # print(f"MOCK_DB_ACCESS: Collection '{collection_name}'")
         return MockFirestoreCollection()
-db = MockDB() # Initialize our mock DB interface
+db = MockDB() 
 
-USER_CREDENTIALS_COLLECTION = f"artifacts/{app_id_global}/user_auth_credentials" # Path for collection (conceptual for mock)
+USER_CREDENTIALS_COLLECTION = f"artifacts/{app_id_global}/user_auth_credentials" 
 
-# --- Placeholders for other parts of your app ---
 EDI_SPEC_DETAILS_MAP = { 
     "DELFOR_D04A": {"display": "DELFOR D04A", "standard": "EDIFACT", "message_type": "DELFOR", "version": "D04A"},
     "DELFOR_D96A": {"display": "DELFOR D96A", "standard": "EDIFACT", "message_type": "DELFOR", "version": "D96A"},
@@ -94,19 +74,13 @@ except ImportError:
         return f"(Placeholder) Response to: '{html.escape(user_input)}'"
 
 def load_css(file_path):
-    # For this test, ensure CSS is loaded if you have style.css
     if os.path.exists(file_path):
-        with open(file_path, "r", encoding='utf-8') as f:
-            st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
-    else:
-        print(f"Warning: CSS file not found at {file_path}")
-
+        with open(file_path, "r", encoding='utf-8') as f: st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
+    else: print(f"Warning: CSS file not found at {file_path}")
 
 def register_user(email, password):
     print(f"DEBUG_REGISTER: Attempting to register email: '{email}'")
-    if not db: 
-        st.error("Database service is not available (register_user)."); 
-        return False, "Database service not available."
+    if not db: st.error("Database service is not available (register_user)."); return False, "Database service not available."
     try:
         user_doc_ref = db.collection(USER_CREDENTIALS_COLLECTION).document(email)
         user_doc_snapshot = user_doc_ref 
@@ -114,20 +88,15 @@ def register_user(email, password):
         if user_doc_snapshot.exists: 
             print(f"DEBUG_REGISTER: Email '{email}' already exists.")
             return False, "Email already registered."
-        
         hashed_password = generate_password_hash(password)
         user_doc_ref.set({"email": email, "hashed_password": hashed_password}) 
         print(f"DEBUG_REGISTER: Registration successful for '{email}'.")
         return True, "Registration successful! Please login."
-    except Exception as e: 
-        print(f"ERROR_REGISTER: {e}"); traceback.print_exc()
-        return False, f"Registration failed: An unexpected error occurred."
+    except Exception as e: print(f"ERROR_REGISTER: {e}"); traceback.print_exc(); return False, f"Registration failed: An unexpected error occurred."
 
 def login_user(email, password):
     print(f"DEBUG_LOGIN: Attempting to login email: '{email}'")
-    if not db: 
-        st.error("Database service is not available (login_user)."); 
-        return False, "Database service not available."
+    if not db: st.error("Database service is not available (login_user)."); return False, "Database service not available."
     try:
         user_doc_ref = db.collection(USER_CREDENTIALS_COLLECTION).document(email)
         user_doc_snapshot = user_doc_ref 
@@ -142,25 +111,21 @@ def login_user(email, password):
             return False, "Incorrect password."
         print(f"DEBUG_LOGIN: Email '{email}' not found in store: {st.session_state._mock_db_users_store}")
         return False, "Email not found."
-    except Exception as e: 
-        print(f"ERROR_LOGIN: {e}"); traceback.print_exc()
-        return False, f"Login failed: An unexpected error occurred."
+    except Exception as e: print(f"ERROR_LOGIN: {e}"); traceback.print_exc(); return False, f"Login failed: An unexpected error occurred."
 
 def display_login_page():
     print("DEBUG_MAIN_APP: >>> display_login_page() CALLED <<<") 
     
-    # Moved Register button to the VERY TOP to ensure it renders
-    print("DEBUG_MAIN_APP: Rendering 'Register here' button FIRST.") 
-    if st.button("Don't have an account? Register here.", key="goto_register_btn_session_debug"):
+    # --- "Register here" button moved to the top ---
+    if st.button("Don't have an account? Register here.", key="goto_register_btn_top_layout_v2"):
         print("DEBUG_MAIN_APP: 'Register here' (top) button CLICKED.") 
         st.session_state.page = "register"
         st.rerun()
-    print("DEBUG_MAIN_APP: 'Register here' (top) button rendering attempted.") 
     
-    st.subheader("Login")
-    with st.form("login_form_session_debug"): 
-        email = st.text_input("Email", key="login_email_session_debug")
-        password = st.text_input("Password", type="password", key="login_password_session_debug")
+    st.subheader("Login") 
+    with st.form("login_form_layout_test_v2"): 
+        email = st.text_input("Email", key="login_email_layout_test_v2")
+        password = st.text_input("Password", type="password", key="login_password_layout_test_v2")
         submit_button = st.form_submit_button("Login")
         if submit_button:
             print(f"DEBUG_LOGIN_FORM: Login form submitted with email: {email}")
@@ -176,10 +141,10 @@ def display_login_page():
 def display_register_page():
     print("DEBUG_MAIN_APP: >>> display_register_page() CALLED <<<") 
     st.subheader("Register New Account")
-    with st.form("register_form_session_debug"): 
-        email = st.text_input("Email", key="register_email_session_debug")
-        password = st.text_input("Password", type="password", key="register_password_session_debug")
-        confirm_password = st.text_input("Confirm Password", type="password", key="register_confirm_password_session_debug")
+    with st.form("register_form_layout_test_v2"): 
+        email = st.text_input("Email", key="register_email_layout_test_v2")
+        password = st.text_input("Password", type="password", key="register_password_layout_test_v2")
+        confirm_password = st.text_input("Confirm Password", type="password", key="register_confirm_password_layout_test_v2")
         submit_button = st.form_submit_button("Register")
         if submit_button:
             print(f"DEBUG_REGISTER_FORM: Register form submitted with email: {email}")
@@ -189,13 +154,13 @@ def display_register_page():
                 success, message_text = register_user(email, password)
                 if success: st.success(message_text); st.session_state.page = "login"; st.rerun()
                 else: st.error(message_text)
-    if st.button("Already have an account? Login here.", key="goto_login_btn_session_debug"):
+    if st.button("Already have an account? Login here.", key="goto_login_btn_layout_test_v2"):
         st.session_state.page = "login"; st.rerun()
     print("DEBUG_MAIN_APP: >>> display_register_page() FINISHED <<<") 
 
 def display_chat_app_page(): 
     print("DEBUG_MAIN_APP: >>> display_chat_app_page() CALLED <<<") 
-    SELECTED_SPEC_KEY_STATE = "selected_spec_internal_key" # Define it here or pass as arg
+    SELECTED_SPEC_KEY_STATE = "selected_spec_internal_key" 
     
     username_display = "User" 
     if st.session_state.get("user_email"):
@@ -203,55 +168,66 @@ def display_chat_app_page():
         except: pass 
     st.sidebar.subheader(f"Welcome, {username_display}!")
 
-    if st.sidebar.button("Logout", key="logout_chat_session_debug"):
+    if "use_ai_model" not in st.session_state: 
+        st.session_state.use_ai_model = True
+    if SELECTED_SPEC_KEY_STATE not in st.session_state: 
+        st.session_state[SELECTED_SPEC_KEY_STATE] = None
+
+    # --- AI toggle and Local Spec Selector moved to Sidebar ---
+    st.sidebar.markdown("---") 
+    st.session_state.use_ai_model = st.sidebar.toggle(
+        "Use AI Model (Gemini)", 
+        value=st.session_state.use_ai_model, 
+        key="ai_model_toggle_sidebar_v2", 
+        help="Toggle ON for AI responses. Toggle OFF for local data lookup."
+    )
+    
+    current_selected_spec_details_for_handler = None 
+    if not st.session_state.use_ai_model: 
+        display_options_list = list(LOCAL_SPEC_OPTIONS_MAP.keys())
+        current_display_value_for_selectbox = "Select a Specification..."
+        stored_key = st.session_state.get(SELECTED_SPEC_KEY_STATE)
+        if stored_key and stored_key in EDI_SPEC_DETAILS_MAP:
+            current_display_value_for_selectbox = EDI_SPEC_DETAILS_MAP[stored_key]["display"]
+        
+        selected_display_option = st.sidebar.selectbox( 
+            "Select EDI Specification:", 
+            options=display_options_list, 
+            index=display_options_list.index(current_display_value_for_selectbox), 
+            key="local_spec_selector_sidebar_v2"
+        )
+        newly_selected_key = LOCAL_SPEC_OPTIONS_MAP[selected_display_option]
+        if newly_selected_key != st.session_state.get(SELECTED_SPEC_KEY_STATE):
+            st.session_state[SELECTED_SPEC_KEY_STATE] = newly_selected_key
+            if newly_selected_key and newly_selected_key in EDI_SPEC_DETAILS_MAP: 
+                current_selected_spec_details_for_handler = EDI_SPEC_DETAILS_MAP[newly_selected_key]
+                if "messages" not in st.session_state: st.session_state.messages = []
+                st.session_state.messages.append({"role": "user", "content": f"Show information for {current_selected_spec_details_for_handler['display']}"})
+            st.rerun() 
+        
+        if st.session_state.get(SELECTED_SPEC_KEY_STATE) and st.session_state[SELECTED_SPEC_KEY_STATE] in EDI_SPEC_DETAILS_MAP:
+             current_selected_spec_details_for_handler = EDI_SPEC_DETAILS_MAP.get(st.session_state[SELECTED_SPEC_KEY_STATE])
+    
+    if st.sidebar.button("Logout", key="logout_chat_layout_test_v2"):
         st.session_state.logged_in = False; st.session_state.user_email = None; st.session_state.page = "login"
-        if "messages" in st.session_state: del st.session_state.messages # Clear chat history on logout
+        if "messages" in st.session_state: del st.session_state.messages 
         if SELECTED_SPEC_KEY_STATE in st.session_state: del st.session_state[SELECTED_SPEC_KEY_STATE]
         st.rerun()
 
-    # --- Main Chat Interface (Copied from your previous full version) ---
+    # Main page content (header and chat area)
     st.markdown("""<div class="app-header"><h1>Volvo Cars EDI AI Assistant</h1><p>AI Assistant for Suppliers of Volvo Cars EDI</p></div>""", unsafe_allow_html=True)
-    if "use_ai_model" not in st.session_state: st.session_state.use_ai_model = True
-    if SELECTED_SPEC_KEY_STATE not in st.session_state: st.session_state[SELECTED_SPEC_KEY_STATE] = None
-    
-    col1_toggle, col_toggle_main, col3_toggle = st.columns([0.2, 0.6, 0.2])
-    with col_toggle_main:
-        ai_model_toggled_on = st.toggle("Use AI Model (Gemini)", value=st.session_state.use_ai_model, key="ai_model_toggle_chat_session", help="Toggle ON for AI responses. Toggle OFF for local data lookup.")
-        if ai_model_toggled_on != st.session_state.use_ai_model:
-            st.session_state.use_ai_model = ai_model_toggled_on; st.rerun()
-    
-    current_selected_spec_details_for_handler = None 
-    if not st.session_state.use_ai_model:
-        col1_select, col_select_main, col3_select = st.columns([0.1, 0.8, 0.1])
-        with col_select_main:
-            display_options_list = list(LOCAL_SPEC_OPTIONS_MAP.keys())
-            current_display_value_for_selectbox = "Select a Specification..."
-            stored_key = st.session_state.get(SELECTED_SPEC_KEY_STATE)
-            if stored_key and stored_key in EDI_SPEC_DETAILS_MAP:
-                current_display_value_for_selectbox = EDI_SPEC_DETAILS_MAP[stored_key]["display"]
-            selected_display_option = st.selectbox("Select EDI Specification for Local Data:", options=display_options_list, index=display_options_list.index(current_display_value_for_selectbox), key="local_spec_selector_chat_session")
-            newly_selected_key = LOCAL_SPEC_OPTIONS_MAP[selected_display_option]
-            if newly_selected_key != st.session_state.get(SELECTED_SPEC_KEY_STATE):
-                st.session_state[SELECTED_SPEC_KEY_STATE] = newly_selected_key
-                if newly_selected_key and newly_selected_key in EDI_SPEC_DETAILS_MAP: 
-                    current_selected_spec_details_for_handler = EDI_SPEC_DETAILS_MAP[newly_selected_key]
-                    if "messages" not in st.session_state: st.session_state.messages = []
-                    st.session_state.messages.append({"role": "user", "content": f"Show information for {current_selected_spec_details_for_handler['display']}"})
-                st.rerun() 
-            if st.session_state.get(SELECTED_SPEC_KEY_STATE) and st.session_state[SELECTED_SPEC_KEY_STATE] in EDI_SPEC_DETAILS_MAP:
-                 current_selected_spec_details_for_handler = EDI_SPEC_DETAILS_MAP.get(st.session_state[SELECTED_SPEC_KEY_STATE])
-    st.markdown("<hr>", unsafe_allow_html=True)
+    st.markdown("<hr>", unsafe_allow_html=True) 
     
     st.markdown('<div class="chat-messages-area" id="chat-messages-area-streamlit-chat">', unsafe_allow_html=True)
     with st.container(): 
         if "messages" not in st.session_state: st.session_state.messages = [{"role": "assistant", "content": "Hello! I'm the EDI AI Assistant for Volvo Cars."},{"role": "assistant", "content": "How can I help you today?"}]
         for i, msg_data in enumerate(st.session_state.messages):
-            message(msg_data["content"], is_user=(msg_data["role"] == "user"), key=f"msg_chat_display_session_{i}", avatar_style="initials" if msg_data["role"] == "user" else "bottts", seed="User" if msg_data["role"] == "user" else "AI")
+            message(msg_data["content"], is_user=(msg_data["role"] == "user"), key=f"msg_chat_display_layout_v2_{i}", avatar_style="initials" if msg_data["role"] == "user" else "bottts", seed="User" if msg_data["role"] == "user" else "AI")
     st.markdown('</div>', unsafe_allow_html=True)
     
     st.markdown('<div class="sticky-input-area">', unsafe_allow_html=True)
-    with st.form("user_input_form_chat_session", clear_on_submit=True): 
-        user_input_value = st.text_input("Ask me anything!", key="user_input_widget_chat_session", placeholder="Ask me anything!", label_visibility="collapsed")
+    with st.form("user_input_form_chat_layout_v2", clear_on_submit=True): 
+        user_input_value = st.text_input("Ask me anything!", key="user_input_widget_chat_layout_v2", placeholder="Ask me anything!", label_visibility="collapsed")
         submitted = st.form_submit_button("✈️") 
     with st.container(): 
         st.markdown("""<div class="footer-text"><p>Volvo Cars EDI AI Assistant provides AI-generated responses. Please verify important information.</p><p>© Copyright AB Volvo 2025 &nbsp;|&nbsp;<a href="#">Privacy</a> &nbsp;|&nbsp;<a href="https://www.volvocars.com">www.volvocars.com</a></p></div>""", unsafe_allow_html=True)
@@ -274,10 +250,9 @@ def display_chat_app_page():
     print("DEBUG_MAIN_APP: >>> display_chat_app_page() FINISHED <<<") 
 
 def main():
-    st.set_page_config(layout="centered", page_title="Volvo Cars EDI AI Assistant - Auth Debug v3")
-    load_css(os.path.join("assets", "style.css")) # Re-enable CSS loading
+    st.set_page_config(layout="centered", page_title="Volvo Cars EDI AI Assistant - Layout Test")
+    load_css(os.path.join("assets", "style.css")) 
 
-    # Initialize session state variables if they don't exist
     if "page" not in st.session_state:
         st.session_state.page = "login" 
         print(f"DEBUG_MAIN_APP: Initialized st.session_state.page to '{st.session_state.page}'")
